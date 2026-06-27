@@ -1,0 +1,29 @@
+Here are my recommendations for structuring the 3 minutes effectively:
+
+**Opening (0:00–0:20) — Code structure review**
+Briefly show your file tree in the IDE — point out `MerkelMain.h/cpp`, `OHLCEntry.h`, `User.h`, `TransactionEntry.h`. One sentence on what each does. Don't linger here, it eats time fast.
+
+**Authentication (0:20–0:45) — Task 2**
+Launch the program, show the auth menu, register a new account live, narrate the hashing and username generation as it happens, then log in with the credentials. This is a natural opening sequence anyway.
+
+**OHLC (0:45–1:10) — Task 1**
+Go to option 7, enter a product, first without a date filter then with one. Narrate what open/close/high/low mean as the table prints.
+
+**Wallet & Transactions (1:10–1:40) — Task 3**
+Deposit some funds (option 8), place an ask and a bid manually (options 3 and 4), then show recent transactions (option 9) and the activity stats (option 10).
+
+**Simulation (1:40–2:10) — Task 4**
+Run option 11, narrate the price generation logic and the 2026 timestamp while it executes. Make sure at least one `[SIM SKIPPED]` line appears — it directly demonstrates the insufficient balance handling requirement.
+
+**Validation (2:10–2:35) — Task 5**
+Quickly type bad input at the menu (letters, out-of-range numbers) and show the graceful rejection. Narrate the `getline` + `try-catch` approach while doing it.
+
+**Closing (2:35–3:00)**
+Briefly flip back to the code for one key function (the OHLC method or simulation loop works well), narrate one or two lines of logic, then end.
+
+**Practical tips:**
+- Record in one take if possible — cuts and edits are obvious and look less professional
+- Have the program already compiled before you hit record, don't waste time on build output
+- Keep a cheat sheet of commands off-screen (product names, dates to enter) so you don't fumble inputs
+- Speak to the *why* not just the *what* — "I'm using getline here because cin >> would break on non-integer input" scores better than "here I'm typing a letter"
+- Test your mic levels before the real recording
