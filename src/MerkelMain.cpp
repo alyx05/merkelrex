@@ -441,7 +441,11 @@ void MerkelMain::enterAsk()
                 tokens[0],
                 OrderBookType::ask);
             obe.username = "simuser";
-            if (wallet.canFulfillOrder(obe))
+            if (obe.price < 0 || obe.amount < 0) {
+                std::cout << "Invalid input: price and amount must be non-negative." << std::endl;
+                std::cout << std::endl;
+            }
+            else if (wallet.canFulfillOrder(obe))
             {
                 std::cout << "Wallet looks good." << std::endl;
                 std::cout << std::endl;
@@ -484,8 +488,11 @@ void MerkelMain::enterBid()
                 tokens[0],
                 OrderBookType::bid);
             obe.username = "simuser";
-
-            if (wallet.canFulfillOrder(obe))
+            if (obe.price < 0 || obe.amount < 0) {
+                std::cout << "Invalid input: price and amount must be non-negative." << std::endl;
+                std::cout << std::endl;
+            }
+            else if (wallet.canFulfillOrder(obe))
             {
                 std::cout << "Wallet looks good. " << std::endl;
                 std::cout << std::endl;

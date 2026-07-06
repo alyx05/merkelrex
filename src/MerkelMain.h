@@ -6,7 +6,6 @@
 #include "Wallet.h"
 #include "OHLCEntry.h"
 #include "User.h"
-#include "TransactionEntry.h"
 
 class MerkelMain
 {
