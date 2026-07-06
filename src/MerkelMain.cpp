@@ -160,7 +160,7 @@ void MerkelMain::processUserOption(int userOption)
     }
     else // invalid option (0 or out-of-range)
     {
-        std::cout << "Invalid choice. Choose 1-11\n" << std::endl;
+        std::cout << "Invalid choice. Choose 1-12\n" << std::endl;
     }
 }
 
