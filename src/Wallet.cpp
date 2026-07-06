@@ -13,12 +13,12 @@ void Wallet::insertCurrency(std::string type, double amount)
     {
         throw std::exception{};
     }
-    if (currencies.count(type) == 0) // not there yet
+    if (currencies.count(type) == 0) // absent - start at 0
     {
         balance = 0;
     }
     else
-    { // is there
+    { // present
         balance = currencies[type];
     }
     balance += amount;
@@ -31,27 +31,25 @@ bool Wallet::removeCurrency(std::string type, double amount)
     {
         return false;
     }
-    if (currencies.count(type) == 0) // not there yet
+    if (currencies.count(type) == 0) // absent
     {
-        // std::cout << "No currency for " << type << std::endl;
         return false;
     }
     else
-    {                                       // is there - do  we have enough
-        if (containsCurrency(type, amount)) // we have enough
+    { // present - check sufficiency
+        if (containsCurrency(type, amount))
         {
-            // std::cout << "Removing " << type << ": " << amount << std::endl;
             currencies[type] -= amount;
             return true;
         }
-        else // they have it but not enough.
+        else
             return false;
     }
 }
 
 bool Wallet::containsCurrency(std::string type, double amount)
 {
-    if (currencies.count(type) == 0) // not there yet
+    if (currencies.count(type) == 0) // absent
         return false;
     else
         return currencies[type] >= amount;
@@ -60,11 +58,9 @@ bool Wallet::containsCurrency(std::string type, double amount)
 std::string Wallet::toString()
 {
     std::string s;
-    for (std::pair<std::string, double> pair : currencies)
+    for (const auto &pair : currencies)
     {
-        std::string currency = pair.first;
-        double amount = pair.second;
-        s += currency + " : " + std::to_string(amount) + "\n";
+        s += pair.first + " : " + std::to_string(pair.second) + "\n";
     }
     return s;
 }
@@ -72,12 +68,12 @@ std::string Wallet::toString()
 bool Wallet::canFulfillOrder(OrderBookEntry order)
 {
     std::vector<std::string> currs = CSVReader::tokenise(order.product, '/');
-    // ask
+    // ask: seller gives base, receives quote
     if (order.orderType == OrderBookType::ask)
     {
         double amount = order.amount;
         std::string currency = currs[0];
-        std::cout << "Wallet::canFulfillOrder " << currency << " : " << amount << std::endl;
+        std::cout << "\nWallet::canFulfillOrder " << currency << " : " << amount << std::endl;
 
         return containsCurrency(currency, amount);
     }
@@ -86,7 +82,7 @@ bool Wallet::canFulfillOrder(OrderBookEntry order)
     {
         double amount = order.amount * order.price;
         std::string currency = currs[1];
-        std::cout << "Wallet::canFulfillOrder " << currency << " : " << amount << std::endl;
+        std::cout << "\nWallet::canFulfillOrder " << currency << " : " << amount << std::endl;
         return containsCurrency(currency, amount);
     }
 
@@ -96,7 +92,7 @@ bool Wallet::canFulfillOrder(OrderBookEntry order)
 void Wallet::processSale(OrderBookEntry &sale)
 {
     std::vector<std::string> currs = CSVReader::tokenise(sale.product, '/');
-    // ask
+    // asksale: decrease base, increase quote
     if (sale.orderType == OrderBookType::asksale)
     {
         double outgoingAmount = sale.amount;
@@ -119,6 +115,11 @@ void Wallet::processSale(OrderBookEntry &sale)
         currencies[outgoingCurrency] -= outgoingAmount;
     }
 }
+std::map<std::string, double> Wallet::getBalances() const
+{
+    return currencies;
+}
+
 std::ostream &operator<<(std::ostream &os, Wallet &wallet)
 {
     os << wallet.toString();

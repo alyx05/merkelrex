@@ -12,7 +12,7 @@ class MerkelMain
 {
 public:
     MerkelMain();
-    /** Call this to start the sim */
+    // start the simulator
     void init();
 
 private:
@@ -25,6 +25,7 @@ private:
     bool loadUser(const std::string& username, User& outUser);
     void saveUserToFile(const User& user);
     void saveInitialWallet(const std::string& username, double bonusAmount);
+    bool loadWalletFromFile(const std::string& username);
     void handleRegister();
     bool handleLogin();
     void handlePasswordReset();
@@ -45,7 +46,7 @@ private:
 
     std::string currentTime;
 
-    //        OrderBook orderBook{"20200317.csv"};
+    // OrderBook orderBook{"20200317.csv"};
     OrderBook orderBook{"src/20200601.csv"};
     Wallet wallet;
 

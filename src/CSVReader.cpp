@@ -10,6 +10,7 @@ std::vector<OrderBookEntry> CSVReader::readCSV(std::string csvFilename)
 {
     std::vector<OrderBookEntry> entries;
 
+    // stream lines and parse into OrderBookEntry objects
     std::ifstream csvFile{csvFilename};
     std::string line;
     if (csvFile.is_open())
@@ -25,10 +26,9 @@ std::vector<OrderBookEntry> CSVReader::readCSV(std::string csvFilename)
             {
                 std::cout << "CSVReader::readCSV bad data" << std::endl;
             }
-        } // end of while
+        }
     }
 
-    std::cout << "CSVReader::readCSV read " << entries.size() << " entries" << std::endl;
     return entries;
 }
 

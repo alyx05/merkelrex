@@ -5,13 +5,13 @@
 #include <iostream>
 #include <fstream>
 
-/** construct, reading a csv data file and loading persistent user trades */
+// construct and populate orders from CSV files
 OrderBook::OrderBook(std::string filename)
 {
-    // 1. Load the core historical market data
+    // load historical market data
     orders = CSVReader::readCSV(filename);
 
-    // 2. Automatically load past persistent simulation trades from previous sessions
+    // load any persisted simulation trades and merge into `orders`
     std::ifstream file("src/USERS_TRADING.CSV");
     if (file.is_open())
     {
@@ -39,8 +39,7 @@ OrderBook::OrderBook(std::string filename)
                 }
             }
         }
-        
-        // Keep everything chronologically sorted silently
+        // keep orders chronologically sorted
         std::sort(orders.begin(), orders.end(), OrderBookEntry::compareByTimestamp);
     }
 }
@@ -138,46 +137,42 @@ void OrderBook::insertOrder(OrderBookEntry &order)
 
 std::vector<OrderBookEntry> OrderBook::matchAsksToBids(std::string product, std::string timestamp)
 {
-    // asks = orderbook.asks
+    // collect asks at timestamp
     std::vector<OrderBookEntry> asks = getOrders(OrderBookType::ask,
                                                  product,
                                                  timestamp);
-    // bids = orderbook.bids
+    // collect bids at timestamp
     std::vector<OrderBookEntry> bids = getOrders(OrderBookType::bid,
                                                  product,
                                                  timestamp);
-
-    // sales = []
+    // prepare sales vector
     std::vector<OrderBookEntry> sales;
 
-    // I put in a little check to ensure we have bids and asks
-    // to process.
+    // return empty if either side has no orders
     if (asks.size() == 0 || bids.size() == 0)
     {
-        std::cout << " OrderBook::matchAsksToBids no bids or asks" << std::endl;
+        std::cout << "No bids or asks." << std::endl;
+        std::cout << std::endl;
         return sales;
     }
-
-    // sort asks lowest first
+    // sort asks lowest first, bids highest first
     std::sort(asks.begin(), asks.end(), OrderBookEntry::compareByPriceAsc);
     // sort bids highest first
     std::sort(bids.begin(), bids.end(), OrderBookEntry::compareByPriceDesc);
-    // for ask in asks:
-    std::cout << "max ask " << asks[asks.size() - 1].price << std::endl;
-    std::cout << "min ask " << asks[0].price << std::endl;
-    std::cout << "max bid " << bids[0].price << std::endl;
-    std::cout << "min bid " << bids[bids.size() - 1].price << std::endl;
+    std::cout << "Max Ask: " << asks[asks.size() - 1].price << std::endl;
+    std::cout << "Min Ask: " << asks[0].price << std::endl;
+    std::cout << "Max Bid: " << bids[0].price << std::endl;
+    std::cout << "Min Bid: " << bids[bids.size() - 1].price << std::endl;
 
     for (OrderBookEntry &ask : asks)
     {
-        //     for bid in bids:
+        // iterate bids to match this ask
         for (OrderBookEntry &bid : bids)
         {
-            //         if bid.price >= ask.price # we have a match
+            // match when bid price >= ask price
             if (bid.price >= ask.price)
             {
-                //             sale = new order()
-                //             sale.price = ask.price
+                // create sale at ask price
                 OrderBookEntry sale{ask.price, 0, timestamp,
                                     product,
                                     OrderBookType::asksale};
@@ -193,55 +188,44 @@ std::vector<OrderBookEntry> OrderBook::matchAsksToBids(std::string product, std:
                     sale.orderType = OrderBookType::asksale;
                 }
 
-                //             # now work out how much was sold and
-                //             # create new bids and asks covering
-                //             # anything that was not sold
-                //             if bid.amount == ask.amount: # bid completely clears ask
+                // determine matched amounts and adjust orders
+                // case: bid.amount == ask.amount -> full match
                 if (bid.amount == ask.amount)
                 {
-                    //                 sale.amount = ask.amount
+                    // sale amount = ask amount
                     sale.amount = ask.amount;
-                    //                 sales.append(sale)
+                    // record sale
                     sales.push_back(sale);
-                    //                 bid.amount = 0 # make sure the bid is not processed again
+                    // mark bid consumed
                     bid.amount = 0;
-                    //                 # can do no more with this ask
-                    //                 # go onto the next ask
-                    //                 break
+                    // move to next ask
                     break;
                 }
-                //           if bid.amount > ask.amount:  # ask is completely gone slice the bid
+                // case: bid.amount > ask.amount -> bid partially fills
                 if (bid.amount > ask.amount)
                 {
-                    //                 sale.amount = ask.amount
+                    // sale amount = ask amount
                     sale.amount = ask.amount;
-                    //                 sales.append(sale)
+                    // record sale
                     sales.push_back(sale);
-                    //                 # we adjust the bid in place
-                    //                 # so it can be used to process the next ask
-                    //                 bid.amount = bid.amount - ask.amount
+                    // reduce bid amount for further matching
                     bid.amount = bid.amount - ask.amount;
-                    //                 # ask is completely gone, so go to next ask
-                    //                 break
+                    // move to next ask
                     break;
                 }
-
-                //             if bid.amount < ask.amount # bid is completely gone, slice the ask
+                // case: bid.amount < ask.amount -> bid consumed, ask partially remains
                 if (bid.amount < ask.amount &&
                     bid.amount > 0)
                 {
-                    //                 sale.amount = bid.amount
+                    // sale amount = bid amount
                     sale.amount = bid.amount;
-                    //                 sales.append(sale)
+                    // record sale
                     sales.push_back(sale);
-                    //                 # update the ask
-                    //                 # and allow further bids to process the remaining amount
-                    //                 ask.amount = ask.amount - bid.amount
+                    // decrease ask amount by consumed bid
                     ask.amount = ask.amount - bid.amount;
-                    //                 bid.amount = 0 # make sure the bid is not processed again
+                    // mark bid consumed
                     bid.amount = 0;
-                    //                 # some ask remains so go to the next bid
-                    //                 continue
+                    // continue matching this ask with next bids
                     continue;
                 }
             }

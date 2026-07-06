@@ -8,21 +8,18 @@
 class OrderBook
 {
 public:
-    /** construct, reading a csv data file */
+    // construct by loading a CSV order file
     OrderBook(std::string filename);
-    /** return vector of all know products in the dataset*/
+    // return list of known products in dataset
     std::vector<std::string> getKnownProducts();
-    /** return vector of Orders according to the sent filters*/
+    // return orders filtered by type/product/timestamp
     std::vector<OrderBookEntry> getOrders(OrderBookType type,
                                           std::string product,
                                           std::string timestamp);
 
-    /** returns the earliest time in the orderbook*/
+    // return earliest timestamp present in the orderbook
     std::string getEarliestTime();
-    /** returns the next time after the
-     * sent time in the orderbook
-     * If there is no next timestamp, wraps around to the start
-     * */
+    // return the next timestamp after `timestamp`; wrap to start if none
     std::string getNextTime(std::string timestamp);
 
     void insertOrder(OrderBookEntry &order);
@@ -32,7 +29,7 @@ public:
     static double getHighPrice(std::vector<OrderBookEntry> &orders);
     static double getLowPrice(std::vector<OrderBookEntry> &orders);
 
-    /** returns OHLC stats grouped by date for a given product and type */
+    // return per-day OHLC stats for a product and type (optional date filter)
     std::vector<OHLCEntry> getOHLC(OrderBookType type, 
                                    std::string product, 
                                    std::string startDate = "", 
