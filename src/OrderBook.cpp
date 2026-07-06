@@ -132,6 +132,8 @@ std::string OrderBook::getNextTime(std::string timestamp)
 void OrderBook::insertOrder(OrderBookEntry &order)
 {
     orders.push_back(order);
+    // Note: this re-sorts the full order vector on every insert,
+    // which can become expensive on large datasets.
     std::sort(orders.begin(), orders.end(), OrderBookEntry::compareByTimestamp);
 }
 

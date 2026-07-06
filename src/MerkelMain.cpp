@@ -25,28 +25,40 @@ void MerkelMain::init()
     currentTime = orderBook.getEarliestTime();
 
 // enforce authentication loop
-    while (!isLoggedIn) {
-        showAuthMenu();
-        std::string choiceLine;
-        std::getline(std::cin, choiceLine);
-        int authChoice = 0;
-        try { authChoice = std::stoi(choiceLine); } catch(...) {}
-
-        if (authChoice == 1) handleLogin();
-        else if (authChoice == 2) handleRegister();
-        else if (authChoice == 3) handlePasswordReset();
-        else if (authChoice == 4) {
-            std::cout << "\nExiting system. Goodbye!" << std::endl;
-            return;
-        } else {
-            std::cout << "Invalid choice. Please pick 1-4.\n" << std::endl;
-        }
-    }
-
     while (true)
     {
+        while (!isLoggedIn) {
+            showAuthMenu();
+            std::string choiceLine;
+            if (!std::getline(std::cin, choiceLine)) {
+                std::cout << "\nInput ended. Exiting.\n" << std::endl;
+                return;
+            }
+            int authChoice = 0;
+            try { authChoice = std::stoi(choiceLine); } catch(...) {}
+
+            if (authChoice == 1) handleLogin();
+            else if (authChoice == 2) handleRegister();
+            else if (authChoice == 3) handlePasswordReset();
+            else if (authChoice == 4) {
+                std::cout << "\nExiting system. Goodbye!" << std::endl;
+                return;
+            } else {
+                std::cout << "Invalid choice. Please pick 1-4.\n" << std::endl;
+            }
+        }
+
         printMenu();
         input = getUserOption();
+        if (input == -1) {
+            std::cout << "\nInput ended. Exiting.\n" << std::endl;
+            return;
+        }
+        if (input == 12) {
+            std::cout << "\nLogout / Exit selected. Returning to auth screen.\n" << std::endl;
+            isLoggedIn = false;
+            continue;
+        }
         processUserOption(input);
     }
 }
@@ -65,6 +77,7 @@ void MerkelMain::printMenu()
     std::cout << "9: View Recent Transactions" << std::endl;
     std::cout << "10: View Activity Summary Statistics" << std::endl;
     std::cout << "11: Run 2026 Trading Activity Simulator" << std::endl;
+    std::cout << "12: Logout / Exit" << std::endl;
     std::cout << std::endl;
 
     // display system time (menu reflects now, not dataset time)
@@ -83,8 +96,10 @@ int MerkelMain::getUserOption()
 {
     int userOption = 0;
     std::string line;
-    std::cout << "Type in 1-11" << std::endl;
-    std::getline(std::cin, line);
+    std::cout << "Type in 1-12" << std::endl;
+    if (!std::getline(std::cin, line)) {
+        return -1;
+    }
     try
     {
         userOption = std::stoi(line);
@@ -280,10 +295,14 @@ void MerkelMain::handleRegister()
 
     // generate 10-digit unique username
     std::srand(std::time(0));
-    std::string newUsername = "";
-    for (int i = 0; i < 10; ++i) {
-        newUsername += std::to_string(std::rand() % 10);
-    }
+    std::string newUsername;
+    User existingUser;
+    do {
+        newUsername.clear();
+        for (int i = 0; i < 10; ++i) {
+            newUsername += std::to_string(std::rand() % 10);
+        }
+    } while (loadUser(newUsername, existingUser));
 
     // hash password
     std::hash<std::string> stringHasher;
