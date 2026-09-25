@@ -1,3 +1,5 @@
+// orderbook.cpp
+
 #include "OrderBook.h"
 #include "CSVReader.h"
 #include <map>
@@ -6,42 +8,22 @@
 #include <fstream>
 
 // construct and populate orders from CSV files
-OrderBook::OrderBook(std::string filename)
+OrderBook::OrderBook(std::string filename, Database& database)
 {
-    // load historical market data
     orders = CSVReader::readCSV(filename);
-
-    // load any persisted simulation trades and merge into `orders`
-    std::ifstream file("src/USERS_TRADING.CSV");
-    if (file.is_open())
+    if (orders.empty())
     {
-        std::string line;
-        while (std::getline(file, line))
-        {
-            std::vector<std::string> tokens = CSVReader::tokenise(line, ',');
-            if (tokens.size() >= 7)
-            {
-                std::string timestamp = tokens[1];
-                std::string product = tokens[2];
-                std::string typeStr = tokens[3];
-                double price = std::stod(tokens[4]);
-                double amount = std::stod(tokens[5]);
-                std::string username = tokens[0];
-
-                OrderBookType type = OrderBookType::unknown;
-                if (typeStr == "asksale") type = OrderBookType::asksale;
-                if (typeStr == "bidsale") type = OrderBookType::bidsale;
-
-                if (type != OrderBookType::unknown)
-                {
-                    OrderBookEntry obe{price, amount, timestamp, product, type, username};
-                    orders.push_back(obe);
-                }
-            }
-        }
-        // keep orders chronologically sorted
-        std::sort(orders.begin(), orders.end(), OrderBookEntry::compareByTimestamp);
+        throw std::runtime_error("OrderBook: failed to load any data from '" + filename +
+                                  "' (check the file exists and the path is correct)");
     }
+
+    // pull persisted simulation trades from SQLite instead of parsing
+    // USERS_TRADING.CSV directly, and merge into `orders`
+    std::vector<OrderBookEntry> saleHistory = database.getAllSaleEntries();
+    orders.insert(orders.end(), saleHistory.begin(), saleHistory.end());
+
+    // keep orders chronologically sorted
+    std::sort(orders.begin(), orders.end(), OrderBookEntry::compareByTimestamp);
 }
 
 /** return vector of all know products in the dataset*/
@@ -82,6 +64,19 @@ std::vector<OrderBookEntry> OrderBook::getOrders(OrderBookType type,
     return orders_sub;
 }
 
+std::vector<OrderBookEntry> OrderBook::getOrdersByProduct(OrderBookType type, std::string product)
+{
+    std::vector<OrderBookEntry> result;
+    for (OrderBookEntry &e : orders)
+    {
+        if (e.orderType == type && e.product == product)
+        {
+            result.push_back(e);
+        }
+    }
+    return result;
+}
+
 double OrderBook::getHighPrice(std::vector<OrderBookEntry> &orders)
 {
     if (orders.empty()) return 0.0;
@@ -108,8 +103,9 @@ double OrderBook::getLowPrice(std::vector<OrderBookEntry> &orders)
 
 std::string OrderBook::getEarliestTime()
 {
-    return orders[0].timestamp;
-}
+    if (orders.empty())
+        throw std::runtime_error("OrderBook::getEarliestTime called with no orders loaded");
+    return orders[0].timestamp;}
 
 std::string OrderBook::getNextTime(std::string timestamp)
 {
@@ -139,100 +135,87 @@ void OrderBook::insertOrder(OrderBookEntry &order)
 
 std::vector<OrderBookEntry> OrderBook::matchAsksToBids(std::string product, std::string timestamp)
 {
-    // collect asks at timestamp
-    std::vector<OrderBookEntry> asks = getOrders(OrderBookType::ask,
-                                                 product,
-                                                 timestamp);
-    // collect bids at timestamp
-    std::vector<OrderBookEntry> bids = getOrders(OrderBookType::bid,
-                                                 product,
-                                                 timestamp);
-    // prepare sales vector
+    std::vector<OrderBookEntry> asks = getOrders(OrderBookType::ask, product, timestamp);
+    std::vector<OrderBookEntry> bids = getOrders(OrderBookType::bid, product, timestamp);
     std::vector<OrderBookEntry> sales;
 
-    // return empty if either side has no orders
-    if (asks.size() == 0 || bids.size() == 0)
+    if (asks.empty() || bids.empty())
     {
-        std::cout << "No bids or asks." << std::endl;
-        std::cout << std::endl;
+        std::cout << "No bids or asks." << std::endl << std::endl;
         return sales;
     }
-    // sort asks lowest first, bids highest first
-    std::sort(asks.begin(), asks.end(), OrderBookEntry::compareByPriceAsc);
-    // sort bids highest first
-    std::sort(bids.begin(), bids.end(), OrderBookEntry::compareByPriceDesc);
-    std::cout << "Max Ask: " << asks[asks.size() - 1].price << std::endl;
-    std::cout << "Min Ask: " << asks[0].price << std::endl;
-    std::cout << "Max Bid: " << bids[0].price << std::endl;
-    std::cout << "Min Bid: " << bids[bids.size() - 1].price << std::endl;
 
-    for (OrderBookEntry &ask : asks)
+    // Price-time priority books: best price is always at begin().
+    std::map<double, std::queue<OrderBookEntry>, std::less<double>> askBook;    // lowest ask first
+    std::map<double, std::queue<OrderBookEntry>, std::greater<double>> bidBook; // highest bid first
+
+    for (OrderBookEntry &a : asks) askBook[a.price].push(a);
+    for (OrderBookEntry &b : bids) bidBook[b.price].push(b);
+
+    std::cout << "Max Ask: " << askBook.rbegin()->first << std::endl;
+    std::cout << "Min Ask: " << askBook.begin()->first << std::endl;
+    std::cout << "Max Bid: " << bidBook.begin()->first << std::endl;
+    std::cout << "Min Bid: " << bidBook.rbegin()->first << std::endl;
+
+    while (!askBook.empty() && !bidBook.empty())
     {
-        // iterate bids to match this ask
-        for (OrderBookEntry &bid : bids)
+        auto askLevel = askBook.begin();  // O(1) best ask
+        auto bidLevel = bidBook.begin();  // O(1) best bid
+
+        if (bidLevel->first < askLevel->first)
+            break; // no crossing prices left, matching is done
+
+        OrderBookEntry &ask = askLevel->second.front();
+        OrderBookEntry &bid = bidLevel->second.front();
+
+        OrderBookEntry sale{ask.price, 0, timestamp, product, OrderBookType::asksale};
+
+        // old:
+        // if (bid.username == "simuser") { sale.username = "simuser"; sale.orderType = OrderBookType::bidsale; }
+        // if (ask.username == "simuser") { sale.username = "simuser"; sale.orderType = OrderBookType::asksale; }
+
+        // new: attribute the sale to whichever side is a real placed order (i.e. not
+        // "dataset", the default for historical CSV rows). If both sides happen to
+        // be real, distinct users (two API-placed orders crossing each other), the
+        // ask side wins here and the bid side's settlement is a known gap -- see
+        // the settleSale rollout notes for the planned follow-up fix.
+        if (bid.username != "dataset")
         {
-            // match when bid price >= ask price
-            if (bid.price >= ask.price)
-            {
-                // create sale at ask price
-                OrderBookEntry sale{ask.price, 0, timestamp,
-                                    product,
-                                    OrderBookType::asksale};
-
-                if (bid.username == "simuser")
-                {
-                    sale.username = "simuser";
-                    sale.orderType = OrderBookType::bidsale;
-                }
-                if (ask.username == "simuser")
-                {
-                    sale.username = "simuser";
-                    sale.orderType = OrderBookType::asksale;
-                }
-
-                // determine matched amounts and adjust orders
-                // case: bid.amount == ask.amount -> full match
-                if (bid.amount == ask.amount)
-                {
-                    // sale amount = ask amount
-                    sale.amount = ask.amount;
-                    // record sale
-                    sales.push_back(sale);
-                    // mark bid consumed
-                    bid.amount = 0;
-                    // move to next ask
-                    break;
-                }
-                // case: bid.amount > ask.amount -> bid partially fills
-                if (bid.amount > ask.amount)
-                {
-                    // sale amount = ask amount
-                    sale.amount = ask.amount;
-                    // record sale
-                    sales.push_back(sale);
-                    // reduce bid amount for further matching
-                    bid.amount = bid.amount - ask.amount;
-                    // move to next ask
-                    break;
-                }
-                // case: bid.amount < ask.amount -> bid consumed, ask partially remains
-                if (bid.amount < ask.amount &&
-                    bid.amount > 0)
-                {
-                    // sale amount = bid amount
-                    sale.amount = bid.amount;
-                    // record sale
-                    sales.push_back(sale);
-                    // decrease ask amount by consumed bid
-                    ask.amount = ask.amount - bid.amount;
-                    // mark bid consumed
-                    bid.amount = 0;
-                    // continue matching this ask with next bids
-                    continue;
-                }
-            }
+            sale.username = bid.username;
+            sale.orderType = OrderBookType::bidsale;
         }
+        if (ask.username != "dataset")
+        {
+            sale.username = ask.username;
+            sale.orderType = OrderBookType::asksale;
+        }
+
+        if (bid.amount == ask.amount)
+        {
+            sale.amount = ask.amount;
+            sales.push_back(sale);
+            askLevel->second.pop();
+            bidLevel->second.pop();
+        }
+        else if (bid.amount > ask.amount)
+        {
+            sale.amount = ask.amount;
+            sales.push_back(sale);
+            bid.amount -= ask.amount;
+            askLevel->second.pop();
+        }
+        else // bid.amount < ask.amount
+        {
+            sale.amount = bid.amount;
+            sales.push_back(sale);
+            ask.amount -= bid.amount;
+            bidLevel->second.pop();
+        }
+
+        if (askLevel->second.empty()) askBook.erase(askLevel);
+        if (bidLevel->second.empty()) bidBook.erase(bidLevel);
     }
+
     return sales;
 }
 
@@ -301,4 +284,75 @@ std::vector<OHLCEntry> OrderBook::getOHLC(OrderBookType type,
     }
 
     return ohlcList;
+}
+
+std::vector<OrderBookEntry> OrderBook::matchNewOrder(OrderBookEntry& newOrder)
+{
+    std::vector<OrderBookEntry> sales;
+    OrderBookType oppositeType = (newOrder.orderType == OrderBookType::ask)
+        ? OrderBookType::bid : OrderBookType::ask;
+
+    // find resting opposite-side orders for this product, best price first
+    std::vector<size_t> oppIdx;
+    for (size_t i = 0; i < orders.size(); ++i)
+    {
+        if (orders[i].product == newOrder.product && orders[i].orderType == oppositeType)
+            oppIdx.push_back(i);
+    }
+    if (oppIdx.empty()) return sales;
+
+    if (newOrder.orderType == OrderBookType::ask)
+    {
+        // matching an ask: want the highest-price resting bids first
+        std::sort(oppIdx.begin(), oppIdx.end(), [this](size_t a, size_t b) { return orders[a].price > orders[b].price; });
+    }
+    else
+    {
+        // matching a bid: want the lowest-price resting asks first
+        std::sort(oppIdx.begin(), oppIdx.end(), [this](size_t a, size_t b) { return orders[a].price < orders[b].price; });
+    }
+
+    std::vector<bool> consumed(orders.size(), false);
+    const size_t MAX_FILLS_PER_CALL = 50;
+
+    for (size_t idx : oppIdx)
+    {
+        if (sales.size() >= MAX_FILLS_PER_CALL) break;
+        if (newOrder.amount <= 0) break;
+curl "http://localhost:18080/api/v1/wallet?user_id=9576485715"
+        OrderBookEntry& counter = orders[idx];
+
+        bool crosses = (newOrder.orderType == OrderBookType::ask)
+            ? (counter.price >= newOrder.price)
+            : (counter.price <= newOrder.price);
+        if (!crosses) break;
+
+        OrderBookEntry& ask = (newOrder.orderType == OrderBookType::ask) ? newOrder : counter;
+        OrderBookEntry& bid = (newOrder.orderType == OrderBookType::bid) ? newOrder : counter;
+
+        double fillAmount = std::min(newOrder.amount, counter.amount);
+
+        OrderBookEntry askSale{counter.price, fillAmount, newOrder.timestamp, newOrder.product, OrderBookType::asksale, ask.username};
+        OrderBookEntry bidSale{counter.price, fillAmount, newOrder.timestamp, newOrder.product, OrderBookType::bidsale, bid.username};
+
+        if (ask.username != "dataset") sales.push_back(askSale);
+        if (bid.username != "dataset") sales.push_back(bidSale);
+
+        newOrder.amount -= fillAmount;
+        counter.amount -= fillAmount;
+        if (counter.amount <= 0) consumed[idx] = true;
+    }
+
+    if (!consumed.empty())
+    {
+        std::vector<OrderBookEntry> remaining;
+        remaining.reserve(orders.size());
+        for (size_t i = 0; i < orders.size(); ++i)
+        {
+            if (!consumed[i]) remaining.push_back(std::move(orders[i]));
+        }
+        orders = std::move(remaining);
+    }
+
+    return sales;
 }

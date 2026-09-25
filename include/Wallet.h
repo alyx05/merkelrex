@@ -19,6 +19,7 @@ class Wallet
         bool canFulfillOrder(OrderBookEntry order);
         // apply a completed sale to wallet balances (assumes owner)
         void processSale(OrderBookEntry& sale);
+        void reset();
 
         // return a human-readable wallet string
         std::string toString();

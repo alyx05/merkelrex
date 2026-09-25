@@ -12,7 +12,7 @@ public:
     // read CSV file into OrderBookEntry vector
     static std::vector<OrderBookEntry> readCSV(std::string csvFile);
     // split a string by separator into tokens
-    static std::vector<std::string> tokenise(std::string csvLine, char separator);
+    static std::vector<std::string> tokenise(std::string_view csvLine, char separator);
 
     // helper to build an OrderBookEntry from discrete fields
     static OrderBookEntry stringsToOBE(std::string price,

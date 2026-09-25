@@ -112,6 +112,12 @@ void Wallet::processSale(OrderBookEntry &sale)
         currencies[outgoingCurrency] -= outgoingAmount;
     }
 }
+
+void Wallet::reset()
+{
+    currencies.clear();
+}
+
 std::map<std::string, double> Wallet::getBalances() const
 {
     return currencies;

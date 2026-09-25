@@ -1,3 +1,5 @@
+// merkelmain.cpp
+
 #include <iostream>
 #include <vector>
 #include <map>
@@ -21,6 +23,8 @@ MerkelMain::MerkelMain()
 
 void MerkelMain::init()
 {
+    migrateLegacyCsvData();
+
     int input;
     currentTime = orderBook.getEarliestTime();
 
@@ -176,106 +180,6 @@ void MerkelMain::showAuthMenu()
     std::cout << "Choose an option: ";
 }
 
-// check if an account exists matching fullName+email
-bool MerkelMain::userExists(const std::string& fullName, const std::string& email)
-{
-    std::ifstream file("src/USERS_REGISTER.CSV");
-    if (!file.is_open()) return false;
-
-    std::string line;
-    while (std::getline(file, line)) {
-        std::vector<std::string> tokens = CSVReader::tokenise(line, ',');
-        if (tokens.size() >= 3) {
-            // tokens[1] is fullName, tokens[2] is email
-            if (tokens[1] == fullName && tokens[2] == email) {
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
-// load user profile by username
-bool MerkelMain::loadUser(const std::string& username, User& outUser)
-{
-    std::ifstream file("src/USERS_REGISTER.CSV");
-    if (!file.is_open()) return false;
-
-    std::string line;
-    while (std::getline(file, line)) {
-        std::vector<std::string> tokens = CSVReader::tokenise(line, ',');
-        if (tokens.size() >= 4 && tokens[0] == username) {
-            outUser.username = tokens[0];
-            outUser.fullName = tokens[1];
-            outUser.email = tokens[2];
-            outUser.passwordHash = std::stoull(tokens[3]); // convert string to size_t
-            return true;
-        }
-    }
-    return false;
-}
-
-// append new user to registration file
-void MerkelMain::saveUserToFile(const User& user)
-{
-    std::ofstream file("src/USERS_REGISTER.CSV", std::ios::app);
-    if (file.is_open()) {
-        file << user.username << "," 
-             << user.fullName << "," 
-             << user.email << "," 
-             << user.passwordHash << "\n";
-    }
-}
-
-// write sign-up bonus snapshot to wallet file
-// format: username,CUR:amount|...
-void MerkelMain::saveInitialWallet(const std::string& username, double bonusAmount)
-{
-    std::ofstream file("src/USERS_WALLET.CSV", std::ios::app);
-    if (file.is_open()) {
-        file << username << ",USDT:" << bonusAmount << "\n";
-    }
-}
-
-// load persisted wallet snapshot for `username`; return false if none
-bool MerkelMain::loadWalletFromFile(const std::string& username)
-{
-    std::ifstream file("src/USERS_WALLET.CSV");
-    if (!file.is_open()) return false;
-
-    bool found = false;
-    std::map<std::string, double> latestBalances;
-    std::string line;
-    while (std::getline(file, line)) {
-        if (line.empty()) continue;
-
-        std::vector<std::string> tokens = CSVReader::tokenise(line, ',');
-        // accept only clean "username,CUR:amt|..." rows; skip malformed
-        if (tokens.size() != 2 || tokens[0] != username) continue;
-
-        // if duplicates exist, last row wins
-        std::vector<std::string> currencyPairs = CSVReader::tokenise(tokens[1], '|');
-        for (const std::string& pair : currencyPairs) {
-            size_t colonPos = pair.find(':');
-            if (colonPos == std::string::npos) continue;
-
-            std::string currency = pair.substr(0, colonPos);
-            try {
-                double amount = std::stod(pair.substr(colonPos + 1));
-                latestBalances[currency] = amount;
-            } catch (...) {
-                // skip unparsable amounts
-            }
-        }
-        found = true;
-    }
-
-    for (const auto& balance : latestBalances) {
-        if (balance.second > 0) wallet.insertCurrency(balance.first, balance.second);
-    }
-    return found;
-}
-
 void MerkelMain::handleRegister()
 {
     std::string fullName, email, password;
@@ -285,7 +189,7 @@ void MerkelMain::handleRegister()
     std::cout << "Enter Email Address: ";
     std::getline(std::cin, email);
 
-    if (userExists(fullName, email)) {
+    if (db.userExists(fullName, email)) {
         std::cout << "\nError: An account with this name and email already exists!\n" << std::endl;
         return;
     }
@@ -293,7 +197,6 @@ void MerkelMain::handleRegister()
     std::cout << "Enter Password: ";
     std::getline(std::cin, password);
 
-    // generate 10-digit unique username
     std::srand(std::time(0));
     std::string newUsername;
     User existingUser;
@@ -302,21 +205,16 @@ void MerkelMain::handleRegister()
         for (int i = 0; i < 10; ++i) {
             newUsername += std::to_string(std::rand() % 10);
         }
-    } while (loadUser(newUsername, existingUser));
+    } while (db.loadUser(newUsername, existingUser));
 
-    // hash password
     std::hash<std::string> stringHasher;
     size_t hashedPass = stringHasher(password);
 
-    // create and save user profile
     User newUser{newUsername, fullName, email, hashedPass};
-    saveUserToFile(newUser);
+    db.saveUser(newUser);
 
-    // record signup bonus in wallet and live session
     double signUpBonus = 5000.0;
-    saveInitialWallet(newUsername, signUpBonus);
-    
-    // Dynamically give active wallet context some start capital too!
+    db.saveInitialWallet(newUsername, signUpBonus);
     wallet.insertCurrency("USDT", signUpBonus);
 
     std::cout << "\nRegistration Successful!\n" << std::endl;
@@ -334,15 +232,20 @@ bool MerkelMain::handleLogin()
     std::getline(std::cin, inputPass);
 
     User targetUser;
-    if (loadUser(inputUser, targetUser)) {
+    if (db.loadUser(inputUser, targetUser)) {
         std::hash<std::string> stringHasher;
         if (stringHasher(inputPass) == targetUser.passwordHash) {
             isLoggedIn = true;
             currentUserProfile = targetUser;
 
-            // restore persisted wallet balances into live session
-            if (!loadWalletFromFile(currentUserProfile.username)) {
+            wallet.reset();   // <- clear any stale balances from a previous session before restoring
+            std::map<std::string, double> balances = db.loadWalletBalances(currentUserProfile.username);
+            if (balances.empty()) {
                 std::cout << "(No prior wallet balance found - starting fresh.)" << std::endl;
+            } else {
+                for (const auto& [currency, amount] : balances) {
+                    if (amount > 0) wallet.insertCurrency(currency, amount);
+                }
             }
 
             std::cout << "\nWelcome back, " << targetUser.fullName << "! Login successful.\n" << std::endl;
@@ -364,36 +267,100 @@ void MerkelMain::handlePasswordReset()
     std::getline(std::cin, inputEmail);
 
     User targetUser;
-    if (loadUser(inputUser, targetUser) && targetUser.email == inputEmail) {
+    if (db.loadUser(inputUser, targetUser) && targetUser.email == inputEmail) {
         std::string newPassword;
         std::cout << "\nIdentity verified! Enter new password: ";
         std::getline(std::cin, newPassword);
 
         std::hash<std::string> stringHasher;
         size_t newHash = stringHasher(newPassword);
-        // rewrite USERS_REGISTER.CSV replacing this user's line
-        std::ifstream inFile("src/USERS_REGISTER.CSV");
-        std::vector<std::string> lines;
-        std::string line;
-        while (std::getline(inFile, line)) {
-            std::vector<std::string> tokens = CSVReader::tokenise(line, ',');
-            if (!tokens.empty() && tokens[0] == inputUser) {
-                    // construct updated CSV line
-                    lines.push_back(targetUser.username + "," + targetUser.fullName + "," + targetUser.email + "," + std::to_string(newHash));
-            } else {
-                lines.push_back(line);
-            }
-        }
-        inFile.close();
+        db.updatePassword(inputUser, newHash);
 
-        std::ofstream outFile("src/USERS_REGISTER.CSV");
-        for (const auto& l : lines) {
-            outFile << l << "\n";
-        }
         std::cout << "Password successfully updated! You can now log in.\n" << std::endl;
     } else {
         std::cout << "\nError: Username and email combination mismatch.\n" << std::endl;
     }
+}
+
+// One-time import: if legacy CSVs exist and the DB's `users` table is empty,
+// pull old registrations/wallets/trades into SQLite so testing progress isn't lost.
+void MerkelMain::migrateLegacyCsvData()
+{
+    std::ifstream registerFile("src/USERS_REGISTER.CSV");
+    if (!registerFile.is_open()) return; // nothing to migrate
+
+    std::string line;
+    while (std::getline(registerFile, line))
+    {
+        std::vector<std::string> tokens = CSVReader::tokenise(line, ',');
+        if (tokens.size() < 4) continue;
+
+        User legacyUser;
+        legacyUser.username = tokens[0];
+        legacyUser.fullName = tokens[1];
+        legacyUser.email = tokens[2];
+        legacyUser.passwordHash = std::stoull(tokens[3]);
+
+        User existing;
+        if (db.loadUser(legacyUser.username, existing)) continue; // already migrated
+
+        db.saveUser(legacyUser);
+    }
+
+    std::ifstream walletFile("src/USERS_WALLET.CSV");
+    if (walletFile.is_open())
+    {
+        std::map<std::string, std::map<std::string, double>> latestPerUser;
+        while (std::getline(walletFile, line))
+        {
+            std::vector<std::string> tokens = CSVReader::tokenise(line, ',');
+            if (tokens.size() != 2) continue;
+            std::vector<std::string> pairs = CSVReader::tokenise(tokens[1], '|');
+            for (const std::string& p : pairs)
+            {
+                size_t colon = p.find(':');
+                if (colon == std::string::npos) continue;
+                try {
+                    latestPerUser[tokens[0]][p.substr(0, colon)] = std::stod(p.substr(colon + 1));
+                } catch (...) {}
+            }
+        }
+        for (const auto& [username, balances] : latestPerUser)
+        {
+            if (db.loadWalletBalances(username).empty())
+                db.syncWalletBalances(username, balances);
+        }
+    }
+
+    std::ifstream tradingFile("src/USERS_TRADING.CSV");
+    if (tradingFile.is_open())
+    {
+        int skipped = 0;
+        while (std::getline(tradingFile, line))
+        {
+            std::vector<std::string> tokens = CSVReader::tokenise(line, ',');
+            if (tokens.size() < 7) continue;
+
+            User owner;
+            if (!db.loadUser(tokens[0], owner)) { skipped++; continue; } // orphan username -- not a real registered user
+
+            TransactionRecord tx;
+            tx.username = tokens[0];
+            tx.timestamp = tokens[1];
+            tx.product = tokens[2];
+            tx.type = tokens[3];
+            try {
+                tx.price = std::stod(tokens[4]);
+                tx.amount = std::stod(tokens[5]);
+                tx.total = std::stod(tokens[6]);
+            } catch (...) { continue; }
+            db.logTransaction(tx);
+        }
+        if (skipped > 0)
+            std::cout << "(Skipped " << skipped << " legacy trade record(s) with no matching registered user.)" << std::endl;
+    }
+
+    std::cout << "(Legacy CSV data migrated into SQLite.)" << std::endl;
 }
 
 void MerkelMain::printHelp()
@@ -440,7 +407,7 @@ void MerkelMain::enterAsk()
                 currentTime,
                 tokens[0],
                 OrderBookType::ask);
-            obe.username = "simuser";
+            obe.username = currentUserProfile.username;
             if (obe.price < 0 || obe.amount < 0) {
                 std::cout << "Invalid input: price and amount must be non-negative." << std::endl;
                 std::cout << std::endl;
@@ -487,7 +454,7 @@ void MerkelMain::enterBid()
                 currentTime,
                 tokens[0],
                 OrderBookType::bid);
-            obe.username = "simuser";
+            obe.username = currentUserProfile.username;
             if (obe.price < 0 || obe.amount < 0) {
                 std::cout << "Invalid input: price and amount must be non-negative." << std::endl;
                 std::cout << std::endl;
@@ -529,14 +496,20 @@ void MerkelMain::gotoNextTimeframe()
         for (OrderBookEntry &sale : sales)
         {
             std::cout << "Sale price: " << sale.price << " amount " << sale.amount << std::endl;
-            if (sale.username == "simuser")
-            {
-                // update the wallet
-                wallet.processSale(sale);
 
-                std::string actionType = (sale.orderType == OrderBookType::asksale) ? "asksale" : "bidsale";
-                logTransaction(actionType, sale.product, sale.price, sale.amount);
-                syncWalletFile();
+            db.settleSale(sale);
+
+            // If this fill belongs to the currently logged-in CLI session's
+            // user, refresh the live in-memory wallet from the DB so the UI
+            // reflects it immediately -- db.settleSale already persisted the
+            // authoritative balance.
+            if (sale.username == currentUserProfile.username)
+            {
+                wallet.reset();
+                for (const auto& [currency, amount] : db.loadWalletBalances(currentUserProfile.username))
+                {
+                    if (amount > 0) wallet.insertCurrency(currency, amount);
+                }
             }
         }
     }
@@ -601,60 +574,26 @@ std::string getSystemTimestamp() {
     return oss.str();
 }
 
-// Rewrite USERS_WALLET.CSV with a single clean snapshot line per user.
-// Format: username,CUR1:amount1|CUR2:amount2|...
-// This replaces the previous approach of appending Wallet::toString(),
-// which embedded newlines mid-row and made the file grow without bound
-// or ever be readable back into a live wallet.
+// Persist the live in-memory wallet's balances for the current user.
+// Replaces the old "rewrite USERS_WALLET.CSV" approach with an atomic
+// delete+reinsert inside a SQLite transaction (see Database::syncWalletBalances).
 void MerkelMain::syncWalletFile()
 {
-    // Preserve every OTHER user's existing valid snapshot line untouched.
-    std::ifstream inFile("src/USERS_WALLET.CSV");
-    std::vector<std::string> otherUserLines;
-    std::string line;
-    while (std::getline(inFile, line)) {
-        if (line.empty()) continue;
-        std::vector<std::string> tokens = CSVReader::tokenise(line, ',');
-        // Only keep lines that match our clean format and belong to a
-        // different user; anything malformed or belonging to this user
-        // gets dropped and replaced below.
-        if (tokens.size() == 2 && tokens[0] != currentUserProfile.username) {
-            otherUserLines.push_back(line);
-        }
-    }
-    inFile.close();
-
-    // Build this user's fresh snapshot from the live wallet state
     std::map<std::string, double> balances = wallet.getBalances();
-    std::ostringstream oss;
-    oss << currentUserProfile.username << ",";
-    bool first = true;
-    for (const auto& balance : balances) {
-        if (!first) oss << "|";
-        oss << balance.first << ":" << balance.second;
-        first = false;
-    }
-
-    // Rewrite the whole file: every other user's line, plus our new one
-    std::ofstream outFile("src/USERS_WALLET.CSV");
-    for (const auto& l : otherUserLines) {
-        outFile << l << "\n";
-    }
-    outFile << oss.str() << "\n";
+    db.syncWalletBalances(currentUserProfile.username, balances);
 }
 
 void MerkelMain::logTransaction(const std::string& type, const std::string& product, double price, double amount)
 {
-    std::ofstream file("src/USERS_TRADING.CSV", std::ios::app);
-    if (file.is_open()) {
-        file << currentUserProfile.username << ","
-             << getSystemTimestamp() << ","
-             << product << ","
-             << type << ","
-             << price << ","
-             << amount << ","
-             << (price * amount) << "\n";
-    }
+    TransactionRecord tx;
+    tx.username = currentUserProfile.username;
+    tx.timestamp = getSystemTimestamp();
+    tx.product = product;
+    tx.type = type;
+    tx.price = price;
+    tx.amount = amount;
+    tx.total = price * amount;
+    db.logTransaction(tx);
 }
 
 void MerkelMain::handleWalletAdjustments()
@@ -704,33 +643,17 @@ void MerkelMain::handleWalletAdjustments()
 void MerkelMain::showRecentTransactions()
 {
     std::cout << "RECENT TRADING TRANSACTIONS\n" << std::endl;
-    std::ifstream file("src/USERS_TRADING.CSV");
-    if (!file.is_open()) {
-        std::cout << "No trading history file records found yet." << std::endl;
-        return;
-    }
+    std::vector<TransactionRecord> recent = db.getRecentTransactions(currentUserProfile.username, 5);
 
-    std::string line;
-    std::vector<std::string> userTrades;
-    while (std::getline(file, line)) {
-        std::vector<std::string> tokens = CSVReader::tokenise(line, ',');
-        if (!tokens.empty() && tokens[0] == currentUserProfile.username) {
-            userTrades.push_back(line);
-        }
-    }
-
-    if (userTrades.empty()) {
+    if (recent.empty()) {
         std::cout << "No recent operations found for your ID." << std::endl;
         return;
     }
 
-    // Capture up to last 5 entries
-    int count = 0;
     std::cout << "Timestamp\t\tProduct\t\tAction\t\tPrice\t\tAmount\t\tTotal Value" << std::endl;
-    for (int i = userTrades.size() - 1; i >= 0 && count < 5; --i, ++count) {
-        std::vector<std::string> tokens = CSVReader::tokenise(userTrades[i], ',');
-        std::cout << tokens[1] << "\t" << tokens[2] << "\t" << tokens[3] << "\t\t" 
-                  << tokens[4] << "\t\t" << tokens[5] << "\t\t" << tokens[6] << std::endl;
+    for (const auto& tx : recent) {
+        std::cout << tx.timestamp << "\t" << tx.product << "\t" << tx.type << "\t\t"
+                  << tx.price << "\t\t" << tx.amount << "\t\t" << tx.total << std::endl;
     }
     std::cout << std::endl;
 }
@@ -754,43 +677,19 @@ void MerkelMain::showUserActivityStats()
         std::getline(std::cin, endDate);
     }
 
-    std::ifstream file("src/USERS_TRADING.CSV");
-    if (!file.is_open()) {
-        std::cout << std::endl;
-        std::cout << "No ledger records available to compile summary stats data." << std::endl;
-        std::cout << std::endl;
-        return;
-    }
+    std::vector<TransactionRecord> txs = db.getTransactionsForUser(
+        currentUserProfile.username, productFilter, startDate, endDate);
 
     int askSalesCount = 0;
     int bidSalesCount = 0;
     double totalMoneySpent = 0.0;
 
-    std::string line;
-    while (std::getline(file, line)) {
-        std::vector<std::string> tokens = CSVReader::tokenise(line, ',');
-        if (tokens.size() >= 7 && tokens[0] == currentUserProfile.username) {
-            std::string tradeDate = tokens[1].substr(0, 10); // "YYYY/MM/DD" prefix of timestamp
-            std::string tradeProduct = tokens[2];
-            std::string type = tokens[3];
-            double value = std::stod(tokens[6]);
-
-            if (!productFilter.empty() && tradeProduct != productFilter) {
-                continue; 
-            }
-            if (!startDate.empty() && tradeDate < startDate) {
-                continue;
-            }
-            if (!endDate.empty() && tradeDate > endDate) {
-                continue;
-            }
-
-            if (type == "asksale") {
-                askSalesCount++;
-            } else if (type == "bidsale") {
-                bidSalesCount++;
-                totalMoneySpent += value; // Tracking total base currency value outlays
-            }
+    for (const auto& tx : txs) {
+        if (tx.type == "asksale") {
+            askSalesCount++;
+        } else if (tx.type == "bidsale") {
+            bidSalesCount++;
+            totalMoneySpent += tx.total;
         }
     }
 

@@ -6,12 +6,12 @@
 #include "Wallet.h"
 #include "OHLCEntry.h"
 #include "User.h"
+#include "Database.h"
 
 class MerkelMain
 {
 public:
     MerkelMain();
-    // start the simulator
     void init();
 
 private:
@@ -20,14 +20,10 @@ private:
     void processUserOption(int userOption);
 
     void showAuthMenu();
-    bool userExists(const std::string& fullName, const std::string& email);
-    bool loadUser(const std::string& username, User& outUser);
-    void saveUserToFile(const User& user);
-    void saveInitialWallet(const std::string& username, double bonusAmount);
-    bool loadWalletFromFile(const std::string& username);
     void handleRegister();
     bool handleLogin();
     void handlePasswordReset();
+    void migrateLegacyCsvData();   // one-time CSV -> SQLite import, runs once at startup
 
     void printHelp();
     void printMarketStats();
@@ -45,8 +41,8 @@ private:
 
     std::string currentTime;
 
-    // OrderBook orderBook{"20200317.csv"};
-    OrderBook orderBook{"src/20200601.csv"};
+    Database db{"data/merkelrex.db"};
+    OrderBook orderBook{"data/20200601.csv", db};
     Wallet wallet;
 
     bool isLoggedIn = false;
