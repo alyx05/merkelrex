@@ -319,7 +319,7 @@ std::vector<OrderBookEntry> OrderBook::matchNewOrder(OrderBookEntry& newOrder)
     {
         if (sales.size() >= MAX_FILLS_PER_CALL) break;
         if (newOrder.amount <= 0) break;
-curl "http://localhost:18080/api/v1/wallet?user_id=9576485715"
+
         OrderBookEntry& counter = orders[idx];
 
         bool crosses = (newOrder.orderType == OrderBookType::ask)

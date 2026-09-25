@@ -1,0 +1,15 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    volumes:
+      - .:/app
+      - build-cache:/app/build
+    ports:
+      - "3000:18080"
+    command: sh -c "cmake -B build -S . && cmake --build build -j$$(nproc) && ./build/merkelrex"
+    restart: unless-stopped
+
+volumes:
+  build-cache:

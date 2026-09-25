@@ -1,0 +1,12 @@
+FROM gcc:13-bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        cmake \
+        sqlite3 \
+        libsqlite3-dev \
+        libasio-dev \
+        git \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app

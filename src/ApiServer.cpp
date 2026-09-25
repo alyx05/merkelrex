@@ -39,6 +39,32 @@ void ApiServer::broadcast(const std::string& message)
 
 void ApiServer::registerRoutes()
 {
+    CROW_ROUTE(app, "/")
+    ([this]() {
+        std::ostringstream html;
+        html << "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+             << "<title>Merkelrex API</title>"
+             << "<style>body{font-family:system-ui,sans-serif;max-width:720px;"
+             << "margin:48px auto;padding:0 24px;color:#1a1a1a}"
+             << "h1{font-size:1.6rem}code{background:#f4f4f5;padding:2px 6px;"
+             << "border-radius:4px;font-size:.9rem}li{margin:6px 0}"
+             << ".badge{display:inline-block;background:#16a34a;color:#fff;"
+             << "padding:2px 10px;border-radius:999px;font-size:.8rem}</style>"
+             << "</head><body>"
+             << "<h1>Merkelrex API <span class='badge'>running</span></h1>"
+             << "<p>C++ order-book trading engine (Crow + SQLite3).</p>"
+             << "<h2>Endpoints</h2><ul>"
+             << "<li><code>GET /api/v1/wallet?user_id=</code> &mdash; wallet balances</li>"
+             << "<li><code>GET /api/v1/orderbook?pair=BTC/USDT</code> &mdash; live depth</li>"
+             << "<li><code>POST /api/v1/orders</code> &mdash; place an order</li>"
+             << "<li><code>GET /api/v1/analytics/ohlc?pair=BTC/USDT</code> &mdash; OHLC stats</li>"
+             << "<li><code>WS /ws/market-feed</code> &mdash; live ticker/fill feed</li>"
+             << "</ul></body></html>";
+        crow::response res(html.str());
+        res.set_header("Content-Type", "text/html; charset=utf-8");
+        return res;
+    });
+
     CROW_ROUTE(app, "/api/v1/wallet")
     ([this](const crow::request& req) {
         auto userId = req.url_params.get("user_id");
