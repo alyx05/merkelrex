@@ -53,6 +53,28 @@ export async function fetchOrderBook(pair: string): Promise<OrderBookResponse> {
   return res.json()
 }
 
+export async function manageWallet(params: {
+  user_id: string
+  currency: string
+  action: 'deposit' | 'withdraw'
+  amount: number
+}): Promise<WalletResponse> {
+  const res = await fetch(`${API_BASE}/wallet/manage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  })
+  const text = await res.text()
+  try {
+    const data = JSON.parse(text)
+    if (!res.ok) throw new Error(data.message ?? text)
+    return data
+  } catch (e) {
+    if (e instanceof SyntaxError) throw new Error(text)
+    throw e
+  }
+}
+
 export async function fetchWallet(userId: string): Promise<WalletResponse> {
   const res = await fetch(`${API_BASE}/wallet?user_id=${encodeURIComponent(userId)}`)
   if (!res.ok) throw new Error(`Wallet fetch failed (${res.status})`)

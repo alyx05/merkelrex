@@ -30,9 +30,23 @@ export function OrderBookDepth({ pair }: { pair: string }) {
 
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
     ws = new WebSocket(`${protocol}//${location.host}/ws/market-feed`)
-    ws.onopen = () => setConnected(true)
+    ws.onopen = () => {
+      setConnected(true)
+      fetchData() // re-sync on (re)connect in case we missed updates
+    }
     ws.onclose = () => setConnected(false)
-    ws.onmessage = () => fetchData()
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data)
+        if (msg.type === 'orderbook' && msg.pair === pair) {
+          setBids(msg.bids)
+          setAsks(msg.asks)
+          setError(null)
+        }
+      } catch {
+        // ignore non-JSON or malformed messages
+      }
+    }
 
     return () => ws?.close()
   }, [pair])

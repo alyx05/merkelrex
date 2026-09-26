@@ -159,6 +159,54 @@ std::map<std::string, double> Database::loadWalletBalances(const std::string& us
     return balances;
 }
 
+bool Database::adjustWalletBalance(const std::string& username,
+                                     const std::string& currency, double delta)
+{
+    exec("BEGIN TRANSACTION;");
+    try
+    {
+        Stmt sel(db, "SELECT amount FROM wallet_balances WHERE username = ? AND currency = ?;");
+        sqlite3_bind_text(sel, 1, username.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(sel, 2, currency.c_str(), -1, SQLITE_TRANSIENT);
+
+        double current = 0.0;
+        bool exists = (sqlite3_step(sel) == SQLITE_ROW);
+        if (exists) current = sqlite3_column_double(sel, 0);
+
+        double newBalance = current + delta;
+        if (newBalance < 0)
+        {
+            exec("ROLLBACK;");
+            return false;
+        }
+
+        if (exists)
+        {
+            Stmt upd(db, "UPDATE wallet_balances SET amount = ? WHERE username = ? AND currency = ?;");
+            sqlite3_bind_double(upd, 1, newBalance);
+            sqlite3_bind_text(upd, 2, username.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(upd, 3, currency.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_step(upd);
+        }
+        else
+        {
+            Stmt ins(db, "INSERT INTO wallet_balances(username, currency, amount) VALUES(?, ?, ?);");
+            sqlite3_bind_text(ins, 1, username.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(ins, 2, currency.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_double(ins, 3, newBalance);
+            sqlite3_step(ins);
+        }
+
+        exec("COMMIT;");
+        return true;
+    }
+    catch (...)
+    {
+        exec("ROLLBACK;");
+        throw;
+    }
+}
+
 void Database::syncWalletBalances(const std::string& username,
                                    const std::map<std::string, double>& balances)
 {

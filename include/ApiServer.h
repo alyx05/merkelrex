@@ -23,4 +23,6 @@ private:
 
     void registerRoutes();
     void broadcast(const std::string& message);
+    void broadcastOrderBook(const std::string& pair);
+    std::string buildOrderBookJson(const std::string& pair);
 };

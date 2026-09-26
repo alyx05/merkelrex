@@ -37,6 +37,52 @@ void ApiServer::broadcast(const std::string& message)
     }
 }
 
+std::string ApiServer::buildOrderBookJson(const std::string& pair)
+{
+    std::vector<OrderBookEntry> bids = orderBook.getOrdersByProduct(OrderBookType::bid, pair);
+    std::vector<OrderBookEntry> asks = orderBook.getOrdersByProduct(OrderBookType::ask, pair);
+
+    auto aggregate = [](std::vector<OrderBookEntry>& entries) {
+        std::map<double, double> levels;
+        for (const auto& e : entries) levels[e.price] += e.amount;
+        return levels;
+    };
+
+    std::map<double, double> bidLevels = aggregate(bids);
+    std::map<double, double> askLevels = aggregate(asks);
+
+    const size_t MAX_LEVELS = 20;
+
+    std::ostringstream json;
+    json << "{\"pair\":\"" << pair << "\",\"bids\":[";
+    size_t count = 0;
+    bool first = true;
+    for (auto it = bidLevels.rbegin(); it != bidLevels.rend() && count < MAX_LEVELS; ++it, ++count)
+    {
+        if (!first) json << ",";
+        json << "{\"price\":" << formatAmount(it->first) << ",\"amount\":" << formatAmount(it->second) << "}";
+        first = false;
+    }
+    json << "],\"asks\":[";
+    count = 0;
+    first = true;
+    for (auto it = askLevels.begin(); it != askLevels.end() && count < MAX_LEVELS; ++it, ++count)
+    {
+        if (!first) json << ",";
+        json << "{\"price\":" << formatAmount(it->first) << ",\"amount\":" << formatAmount(it->second) << "}";
+        first = false;
+    }
+    json << "]}";
+    return json.str();
+}
+
+void ApiServer::broadcastOrderBook(const std::string& pair)
+{
+    std::string payload = buildOrderBookJson(pair);
+    std::string msg = "{\"type\":\"orderbook\"," + payload.substr(1); // merge type into the JSON object
+    broadcast(msg);
+}
+
 void ApiServer::registerRoutes()
 {
     CROW_ROUTE(app, "/")
@@ -100,42 +146,7 @@ void ApiServer::registerRoutes()
         }
         std::string pair = pairParam;
 
-        std::vector<OrderBookEntry> bids = orderBook.getOrdersByProduct(OrderBookType::bid, pair);
-        std::vector<OrderBookEntry> asks = orderBook.getOrdersByProduct(OrderBookType::ask, pair);
-
-        auto aggregate = [](std::vector<OrderBookEntry>& entries) {
-            std::map<double, double> levels;
-            for (const auto& e : entries) levels[e.price] += e.amount;
-            return levels;
-        };
-
-        std::map<double, double> bidLevels = aggregate(bids);
-        std::map<double, double> askLevels = aggregate(asks);
-
-        const size_t MAX_LEVELS = 20;
-
-        std::ostringstream json;
-        json << "{\"pair\":\"" << pair << "\",\"bids\":[";
-        size_t count = 0;
-        bool first = true;
-        for (auto it = bidLevels.rbegin(); it != bidLevels.rend() && count < MAX_LEVELS; ++it, ++count)
-        {
-            if (!first) json << ",";
-            json << "{\"price\":" << formatAmount(it->first) << ",\"amount\":" << formatAmount(it->second) << "}";
-            first = false;
-        }
-        json << "],\"asks\":[";
-        count = 0;
-        first = true;
-        for (auto it = askLevels.begin(); it != askLevels.end() && count < MAX_LEVELS; ++it, ++count)
-        {
-            if (!first) json << ",";
-            json << "{\"price\":" << formatAmount(it->first) << ",\"amount\":" << formatAmount(it->second) << "}";
-            first = false;
-        }
-        json << "]}";
-
-        crow::response res(json.str());
+        crow::response res(buildOrderBookJson(pair));
         res.set_header("Content-Type", "application/json");
         return res;
     });
@@ -238,6 +249,10 @@ void ApiServer::registerRoutes()
             broadcast(fillMsg.str());
         }
 
+        // Push the updated order book over the WebSocket so connected clients
+        // get the new depth directly — no REST round-trip required.
+        broadcastOrderBook(product);
+
         std::ostringstream json;
         json << "{\"status\":\"accepted\",\"product\":\"" << product
             << "\",\"type\":\"" << typeStr
@@ -245,6 +260,70 @@ void ApiServer::registerRoutes()
             << ",\"amount\":" << formatAmount(amount) << "}";
 
         crow::response res(201, json.str());
+        res.set_header("Content-Type", "application/json");
+        return res;
+    });
+
+    CROW_ROUTE(app, "/api/v1/wallet/manage").methods(crow::HTTPMethod::POST)
+    ([this](const crow::request& req) {
+        crow::json::rvalue body;
+        try
+        {
+            body = crow::json::load(req.body);
+            if (!body) throw std::runtime_error("invalid JSON");
+        }
+        catch (...)
+        {
+            return crow::response(400, "Malformed JSON body");
+        }
+
+        if (!body.has("user_id") || !body.has("currency") ||
+            !body.has("action") || !body.has("amount"))
+        {
+            return crow::response(400, "Missing required fields: user_id, currency, action, amount");
+        }
+
+        std::string userId = body["user_id"].s();
+        std::string currency = body["currency"].s();
+        std::string action = body["action"].s();
+        double amount = body["amount"].d();
+
+        if (amount <= 0)
+        {
+            return crow::response(400, "amount must be positive");
+        }
+
+        if (action != "deposit" && action != "withdraw")
+        {
+            return crow::response(400, "action must be \"deposit\" or \"withdraw\"");
+        }
+
+        User user;
+        if (!db.loadUser(userId, user))
+        {
+            return crow::response(404, "No such user_id");
+        }
+
+        double delta = (action == "deposit") ? amount : -amount;
+        if (!db.adjustWalletBalance(userId, currency, delta))
+        {
+            return crow::response(400, "Insufficient funds for withdrawal");
+        }
+
+        std::map<std::string, double> balances = db.loadWalletBalances(userId);
+
+        std::ostringstream json;
+        json << "{\"user_id\":\"" << userId << "\",\"balances\":{";
+        bool first = true;
+        for (const auto& [cur, amt] : balances)
+        {
+            if (!first) json << ",";
+            json << "\"" << cur << "\":" << formatAmount(amt);
+            first = false;
+        }
+        json << "}}";
+
+        crow::response res(json.str());
         res.set_header("Content-Type", "application/json");
         return res;
     });

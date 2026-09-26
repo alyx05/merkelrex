@@ -38,6 +38,12 @@ public:
     void syncWalletBalances(const std::string& username,
                              const std::map<std::string, double>& balances);
 
+    // Atomically add (positive delta) or subtract (negative delta) from a
+    // single currency balance.  Creates the row if it doesn't exist yet.
+    // Returns false (with no change) if the withdrawal would go negative.
+    bool adjustWalletBalance(const std::string& username,
+                              const std::string& currency, double delta);
+
     void logTransaction(const TransactionRecord& tx);
     std::vector<TransactionRecord> getRecentTransactions(const std::string& username, int limit);
     std::vector<TransactionRecord> getTransactionsForUser(const std::string& username,
