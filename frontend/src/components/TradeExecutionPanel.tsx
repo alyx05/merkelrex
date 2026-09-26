@@ -22,6 +22,7 @@ export function TradeExecutionPanel({
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [manageCurrency, setManageCurrency] = useState('')
+  const [customCurrency, setCustomCurrency] = useState('')
   const [manageAmount, setManageAmount] = useState('')
   const [manageMessage, setManageMessage] = useState<string | null>(null)
   const [manageError, setManageError] = useState<string | null>(null)
@@ -50,14 +51,22 @@ export function TradeExecutionPanel({
   const handleManage = async (action: 'deposit' | 'withdraw') => {
     setManageMessage(null)
     setManageError(null)
+    const currency = manageCurrency === '__other__' ? customCurrency.trim().toUpperCase() : manageCurrency
+    if (!currency) {
+      setManageError('Please select or enter a currency')
+      return
+    }
     try {
       await manageWallet({
         user_id: DEFAULT_USER,
-        currency: manageCurrency,
+        currency,
         action,
         amount: parseFloat(manageAmount),
       })
-      setManageMessage(`✓ ${action === 'deposit' ? 'Deposited' : 'Withdrew'} ${manageAmount} ${manageCurrency}`)
+      setManageMessage(`✓ ${action === 'deposit' ? 'Deposited' : 'Withdrew'} ${manageAmount} ${currency}`)
+      setManageAmount('')
+      if (manageCurrency === '__other__') setCustomCurrency('')
+      loadWallet()
       setManageAmount('')
       loadWallet()
     } catch (err) {
@@ -194,7 +203,17 @@ export function TradeExecutionPanel({
                 {Object.keys(wallet).map((c) => (
                   <option key={c} value={c}>{c}</option>
                 ))}
+                <option value="__other__">+ New currency…</option>
               </select>
+              {manageCurrency === '__other__' && (
+                <input
+                  type="text"
+                  placeholder="e.g. XRP"
+                  value={customCurrency}
+                  onChange={(e) => setCustomCurrency(e.target.value)}
+                  className="w-24 bg-slate-800 border border-slate-700 rounded-lg px-2 py-2 text-slate-200 text-sm"
+                />
+              )}
               <input
                 type="number"
                 step="any"
